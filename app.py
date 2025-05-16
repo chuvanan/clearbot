@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from typing import Iterable, TypeAlias
 
@@ -16,28 +17,44 @@ MyTurn: TypeAlias = chatlas.Turn[openai.types.chat.ChatCompletion]
 
 load_dotenv()
 
+model_options = {}
+
+if "OPENAI_API_KEY" in os.environ:
+    model_options["OpenAI"] = {
+        "gpt-4.1": "GPT-4.1 (slowest, smartest)",
+        "gpt-4.1-mini": "GPT-4.1 mini",
+        "gpt-4.1-nano": "GPT-4.1 nano (fastest, cheapest)",
+    }
+if "ANTHROPIC_API_KEY" in os.environ:
+    model_options["Anthropic"] = {
+        "claude-3-7-sonnet-latest": "Claude 3.7 Sonnet",
+        "claude-3-5-sonnet-latest": "Claude 3.5 Sonnet",
+        "claude-3-5-haiku-latest": "Claude 3.5 Haiku",
+    }
+
+if len(model_options) == 0:
+    raise ValueError(
+        "No API keys found. Please set OPENAI_API_KEY and/or ANTHROPIC_API_KEY in your environment."
+    )
+
+
 def app_ui(request: Request):
     return ui.page_sidebar(
         ui.sidebar(
             ui.input_select(
                 "model",
                 "Model",
-                {
-                    "gpt-4.1": "GPT-4.1 (slowest, smartest)",
-                    "gpt-4.1-mini": "GPT-4.1 mini",
-                    "gpt-4.1-nano": "GPT-4.1 nano (fastest, cheapest)",
-                    # "claude-3.7-sonnet-latest": "Claude 3.7 Sonnet",
-                    # "claude-3.5-sonnet-latest": "Claude 3.5 Sonnet",
-                    # "claude-3.5-haiku-latest": "Claude 3.5 Haiku",
-                },
-                selected="gpt-4.1-nano",
+                model_options,
+                selected="gpt-4.1-mini",
             ),
-            ui.input_text_area("system_prompt", "System prompt", rows=4),
+            ui.input_text_area("system_prompt", "System prompt", rows=6),
             ui.help_text("Instructs the LLM how to behave"),
             ui.input_slider(
                 "temperature", "Temperature", min=0, max=2, value=0.7, step=0.05
             ),
-            ui.help_text("Lower for coherence, higher for randomness"),
+            ui.help_text(
+                "Lower for coherence, higher for randomness. (Ignored for Claude)"
+            ),
             ui.input_checkbox_group(
                 "tools",
                 "Tools",
@@ -45,7 +62,6 @@ def app_ui(request: Request):
                     "filesystem": "Filesystem access",
                     "websearch": "Web search",
                 },
-                selected=["websearch"],
             ),
             # ui.tags.button(
             #     "Show traces",
@@ -53,7 +69,8 @@ def app_ui(request: Request):
             #     onclick="bootstrap.Offcanvas.getOrCreateInstance(document.querySelector('#trace')).show()",
             # ),
             width=325,
-            title="Parameters",
+            title="Settings",
+            open="closed",
         ),
         offcanvas_ui(
             "trace",
@@ -64,23 +81,12 @@ def app_ui(request: Request):
             ),
             style="--bs-offcanvas-width: min(600px, 100vw);",
         ),
-        ui.card(
-            "This bot helps you understand how LLMs work by showing you the under-the-hood requests and responses.",
-            fill=False,
-        ),
-        ui.card(
-            ui.tags.style(
-                "#clear { display: none; }",
-                id="hide_new_convo_css",
-            ),
-            ui.input_action_button(
-                "clear",
-                "📄 New Chat",
-                class_="btn-sm btn-default float-right bg-light shadow",
-                style="position: fixed; top: 0.5rem; left: 50%; transform: translateX(-50%); --bs-btn-hover-color: unset; z-index: 100;",
-            ),
-            ui.chat_ui("chat"),
-            fillable=True,
+        ui.chat_ui("chat"),
+        ui.input_action_button(
+            "clear",
+            "📝 New Chat",
+            class_="btn-sm",
+            style="position: fixed; top: 0.75rem; right: 1.4rem; z-index: 100;",
         ),
         ui.head_content(
             ui.tags.script(src="json-viewer.js"),
@@ -93,6 +99,7 @@ def app_ui(request: Request):
                 """
             ),
         ),
+        title="Clearbot",
         fillable=True,
     )
 
@@ -139,11 +146,22 @@ def server(input: Inputs, output: Outputs, session: Session):
         #     system_prompt=params.system_prompt,
         #     turns=these_turns,
         # )
-        chat_client = chatlas.ChatOpenAI(
-            model=params.model,
-            system_prompt=params.system_prompt,
-            turns=these_turns,
-        )
+        if params.model.startswith("claude"):
+            chat_client = chatlas.ChatOpenAI(
+                base_url="https://api.anthropic.com/v1/",
+                api_key=os.environ["ANTHROPIC_API_KEY"],
+                model=params.model,
+                system_prompt=params.system_prompt,
+                turns=these_turns,
+            )
+        elif params.model.startswith("gpt"):
+            chat_client = chatlas.ChatOpenAI(
+                model=params.model,
+                system_prompt=params.system_prompt,
+                turns=these_turns,
+            )
+        else:
+            raise ValueError(f"Unknown model: {params.model}")
 
         for toolset in input.tools():
             for tool in all_tools[toolset]:
@@ -212,12 +230,6 @@ def server(input: Inputs, output: Outputs, session: Session):
                         "content": "\n".join([str(x) for x in turn.contents]) + suffix,
                     }
                 )
-
-    @reactive.effect
-    def manage_new_chat_button_visibility():
-        if len(chat.messages()) > 1:
-            ui.remove_ui("#hide_new_convo_css")
-            manage_new_chat_button_visibility.destroy()
 
     @reactive.effect
     @reactive.event(input.clear)
