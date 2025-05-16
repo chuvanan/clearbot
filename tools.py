@@ -93,7 +93,27 @@ def duckduckgo_search(query: str, max_results: int = 20):
 @safe_errors
 def http_get(url: str) -> str:
     """Retrieves the contents of a URL using an HTTP GET request. Turns HTML into plaintext."""
-    response = requests.get(url)
+
+    # Lie about the user agent to avoid 403 Forbidden errors.
+    response = requests.get(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "accept-language": "en-US,en;q=0.9",
+            "cache-control": "no-cache",
+            "pragma": "no-cache",
+            "priority": "u=0, i",
+            "sec-ch-ua": '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"',
+            "sec-ch-ua-mobile": "?1",
+            "sec-ch-ua-platform": '"Android"',
+            "sec-fetch-dest": "document",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-site": "none",
+            "sec-fetch-user": "?1",
+            "upgrade-insecure-requests": "1",
+        },
+    )
     response.raise_for_status()
     # If HTML, convert to text using Pandoc. If plaintext, leave it alone.
     if "text/html" in response.headers["Content-Type"]:
