@@ -45,6 +45,8 @@ if len(model_options) == 0:
         "No API keys found. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, and/or OPENROUTER_API_KEY in your environment."
     )
 
+default_model = next(iter(next(iter(model_options.values())).keys()))
+
 
 def app_ui(request: Request):
     return ui.page_sidebar(
@@ -53,7 +55,7 @@ def app_ui(request: Request):
                 "model",
                 "Model",
                 model_options,
-                selected="gpt-4.1-mini",
+                selected=default_model,
             ),
             ui.input_text_area("system_prompt", "System prompt", rows=6),
             ui.help_text("Instructs the LLM how to behave"),
@@ -154,15 +156,8 @@ def server(input: Inputs, output: Outputs, session: Session):
         these_turns = turns()
         params: RequestParams = current_params(user_prompt)
 
-        # chat_client = chatlas.ChatOllama(
-        #     model="llama3.2",
-        #     system_prompt=params.system_prompt,
-        #     turns=these_turns,
-        # )
         if params.model.startswith("claude"):
-            chat_client = chatlas.ChatOpenAI(
-                base_url="https://api.anthropic.com/v1/",
-                api_key=os.environ["ANTHROPIC_API_KEY"],
+            chat_client = chatlas.ChatAnthropic(
                 model=params.model,
                 system_prompt=params.system_prompt,
             )
