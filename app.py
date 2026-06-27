@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Callable, Iterable, TypeAlias
 
 import chatlas
-import openai
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from shiny import App, Inputs, Outputs, Session, bookmark, reactive, render, req, ui
@@ -14,7 +13,7 @@ from starlette.requests import Request
 from offcanvas import offcanvas_ui
 from tools import all_tools
 
-MyTurn: TypeAlias = chatlas.Turn[openai.types.chat.ChatCompletion]
+MyTurn: TypeAlias = chatlas.Turn
 
 load_dotenv()
 
@@ -32,10 +31,18 @@ if "ANTHROPIC_API_KEY" in os.environ:
         "claude-sonnet-4-6": "claude-sonnet-4-6",
         "claude-haiku-4-5-20251001": "claude-haiku-4-5",
     }
+if "OPENROUTER_API_KEY" in os.environ:
+    model_options["OpenRouter"] = {
+        "openrouter/anthropic/claude-sonnet-4-5": "Claude Sonnet 4.5",
+        "openrouter/google/gemini-2.5-pro": "Gemini 2.5 Pro",
+        "openrouter/meta-llama/llama-4-maverick": "Llama 4 Maverick",
+        "openrouter/deepseek/deepseek-r1-0528": "DeepSeek R1",
+        "openrouter/mistralai/mistral-small-3.2-24b-instruct": "Mistral Small 3.2",
+    }
 
 if len(model_options) == 0:
     raise ValueError(
-        "No API keys found. Please set OPENAI_API_KEY and/or ANTHROPIC_API_KEY in your environment."
+        "No API keys found. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, and/or OPENROUTER_API_KEY in your environment."
     )
 
 
@@ -158,16 +165,22 @@ def server(input: Inputs, output: Outputs, session: Session):
                 api_key=os.environ["ANTHROPIC_API_KEY"],
                 model=params.model,
                 system_prompt=params.system_prompt,
-                turns=these_turns,
             )
         elif params.model.startswith("gpt"):
             chat_client = chatlas.ChatOpenAI(
                 model=params.model,
                 system_prompt=params.system_prompt,
-                turns=these_turns,
+            )
+        elif params.model.startswith("openrouter/"):
+            chat_client = chatlas.ChatOpenRouter(
+                model=params.model.removeprefix("openrouter/"),
+                system_prompt=params.system_prompt,
             )
         else:
             raise ValueError(f"Unknown model: {params.model}")
+
+        if these_turns:
+            chat_client.set_turns(these_turns)
 
         for toolset in input.tools():
             for tool in all_tools[toolset]:
@@ -330,12 +343,17 @@ def reconstruct_request_traces(
 ) -> list[object]:
     tools_schema = reconstruct_tools_schema(params.tools)
 
-    msgs = chatlas._openai.OpenAIProvider._as_message_param(turns)
+    turns_list = list(turns)
+    msgs = [
+        chatlas._provider_openai.as_input_param(content, turn.role)
+        for turn in turns_list
+        for content in turn.contents
+    ]
     kw = dict(
         model=params.model,
         temperature=params.temperature,
         tools=tools_schema,
-        messages=msgs,
+        input=msgs,
     )
     return kw
 
