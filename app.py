@@ -1,7 +1,8 @@
+import inspect
 import json
 import os
 from pathlib import Path
-from typing import Iterable, TypeAlias
+from typing import Callable, Iterable, TypeAlias
 
 import chatlas
 import openai
@@ -27,9 +28,9 @@ if "OPENAI_API_KEY" in os.environ:
     }
 if "ANTHROPIC_API_KEY" in os.environ:
     model_options["Anthropic"] = {
-        "claude-3-7-sonnet-latest": "Claude 3.7 Sonnet",
-        "claude-3-5-sonnet-latest": "Claude 3.5 Sonnet",
-        "claude-3-5-haiku-latest": "Claude 3.5 Haiku",
+        "claude-opus-4-8": "claude-opus-4-8",
+        "claude-sonnet-4-6": "claude-sonnet-4-6",
+        "claude-haiku-4-5-20251001": "claude-haiku-4-5",
     }
 
 if len(model_options) == 0:
@@ -63,11 +64,14 @@ def app_ui(request: Request):
                     "websearch": "Web search",
                 },
             ),
-            # ui.tags.button(
-            #     "Show traces",
-            #     class_="btn btn-default",
-            #     onclick="bootstrap.Offcanvas.getOrCreateInstance(document.querySelector('#trace')).show()",
-            # ),
+            ui.markdown("⚠️ Runs arbitrary Python code."),
+            ui.input_text_area(
+                "custom_tool_code",
+                "Custom tool code",
+                rows=5,
+                placeholder="def my_tool(name: str) -> str:\n    \"\"\"Say hello.\"\"\"\n    return f\"Hello, {name}!\"",
+            ),
+            ui.input_action_button("register_tools", "Register tools", class_="btn-sm"),
             width=325,
             title="Settings",
             open="closed",
@@ -117,6 +121,7 @@ class RequestParams(BaseModel):
 class SessionState(BaseModel):
     turns: list[MyTurn]
     snapshots: list[tuple[RequestParams, list[MyTurn]]]
+    custom_tool_code: str = ""
 
 
 def server(input: Inputs, output: Outputs, session: Session):
@@ -124,6 +129,7 @@ def server(input: Inputs, output: Outputs, session: Session):
     snapshots: reactive.Value[list[tuple[RequestParams, list[MyTurn]]]] = (
         reactive.Value([])
     )
+    custom_tools: reactive.Value[list[Callable]] = reactive.Value([])
 
     chat = ui.Chat("chat")
 
@@ -167,13 +173,12 @@ def server(input: Inputs, output: Outputs, session: Session):
             for tool in all_tools[toolset]:
                 chat_client.register_tool(tool)
 
+        for tool in custom_tools():
+            chat_client.register_tool(tool)
+
         resp = await chat_client.stream_async(
             params.user_prompt, kwargs=dict(temperature=params.temperature)
         )
-
-        for tool in params.tools:
-            # TODO: Implement tools
-            pass
 
         async def gen():
             async for chunk in resp:
@@ -204,7 +209,11 @@ def server(input: Inputs, output: Outputs, session: Session):
 
     @session.bookmark.on_bookmark
     def session_on_bookmark(state: bookmark.BookmarkState):
-        ss = SessionState(turns=turns(), snapshots=snapshots())
+        ss = SessionState(
+            turns=turns(),
+            snapshots=snapshots(),
+            custom_tool_code=input.custom_tool_code(),
+        )
         print(ss.model_dump_json())
         state.values["session_state"] = ss.model_dump(mode="json")
 
@@ -216,6 +225,21 @@ def server(input: Inputs, output: Outputs, session: Session):
             turns.set(last_turns)
             snapshots.set(ss.snapshots)
             ui.update_select("trace_num", choices=list(range(len(snapshots.get()))))
+
+            if ss.custom_tool_code:
+                ui.update_text_area("custom_tool_code", value=ss.custom_tool_code)
+                local_ns: dict[str, object] = {"__builtins__": __builtins__}
+                try:
+                    exec(ss.custom_tool_code, local_ns)
+                    tools = [
+                        v
+                        for v in local_ns.values()
+                        if inspect.isfunction(v) and v.__doc__
+                    ]
+                    if tools:
+                        custom_tools.set(tools)
+                except Exception:
+                    pass
 
             i = 0
             for turn in last_turns:
@@ -237,6 +261,43 @@ def server(input: Inputs, output: Outputs, session: Session):
         await chat.clear_messages()
         turns.set([])
         snapshots.set([])
+
+    @reactive.effect
+    @reactive.event(input.register_tools)
+    async def register_custom_tools():
+        code = input.custom_tool_code()
+        if not code.strip():
+            custom_tools.set([])
+            ui.notification_show("No custom tool code provided.", type="warning")
+            return
+
+        local_ns: dict[str, object] = {"__builtins__": __builtins__}
+        try:
+            exec(code, local_ns)
+        except Exception as e:
+            custom_tools.set([])
+            ui.notification_show(f"Error parsing custom tool code: {e}", type="error")
+            return
+
+        tools = [
+            v
+            for v in local_ns.values()
+            if inspect.isfunction(v) and v.__doc__
+        ]
+
+        if not tools:
+            custom_tools.set([])
+            ui.notification_show(
+                "No valid functions found. Each function needs a docstring.",
+                type="warning",
+            )
+            return
+
+        custom_tools.set(tools)
+        ui.notification_show(
+            f"Registered {len(tools)} custom tool(s): {', '.join(t.__name__ for t in tools)}",
+            type="message",
+        )
 
     def button_for_index(i: int) -> str:
         return f"""\n\n<a class="text-decoration-none" href="#" data-snapshot-index="{i}" title="Inspect this request/response">{{…}}</a>"""

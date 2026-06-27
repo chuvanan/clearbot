@@ -1,1 +1,11 @@
 shiny_bookmarks/
+
+# Dot files and dot folders
+.*
+.*/
+
+# Python
+__pycache__/
+
+# Agent config
+AGENTS.md
