@@ -63,7 +63,7 @@ def app_ui(request: Request):
                 "temperature", "Temperature", min=0, max=2, value=0.7, step=0.05
             ),
             ui.help_text(
-                "Lower for coherence, higher for randomness. (Ignored for Claude)"
+                "Lower for coherence, higher for randomness."
             ),
             ui.input_checkbox_group(
                 "tools",
@@ -333,54 +333,84 @@ def server(input: Inputs, output: Outputs, session: Session):
         )
 
 
+def _turn_contents_to_dicts(turn: chatlas.Turn) -> list[dict]:
+    """Convert turn contents to serializable dicts using public API only."""
+    results = []
+    for content in turn.contents:
+        if isinstance(content, chatlas.ContentToolRequest):
+            results.append({
+                "type": "tool_request",
+                "id": content.id,
+                "name": content.name,
+                "arguments": content.arguments,
+            })
+        elif isinstance(content, chatlas.ContentToolResult):
+            results.append({
+                "type": "tool_result",
+                "id": content.id,
+                "value": str(content.get_model_value()),
+            })
+        else:
+            results.append({
+                "type": type(content).__name__,
+                "text": str(content),
+            })
+    return results
+
+
 def reconstruct_request_traces(
-    params: RequestParams, turns: Iterable[MyTurn]
-) -> list[object]:
+    params: RequestParams, turns: Iterable[chatlas.Turn]
+) -> dict:
     tools_schema = reconstruct_tools_schema(params.tools)
 
-    turns_list = list(turns)
-    msgs = [
-        chatlas._provider_openai.as_input_param(content, turn.role)
-        for turn in turns_list
-        for content in turn.contents
+    messages = [
+        {"role": turn.role, "contents": _turn_contents_to_dicts(turn)}
+        for turn in turns
     ]
-    kw = dict(
+    return dict(
         model=params.model,
         temperature=params.temperature,
         tools=tools_schema,
-        input=msgs,
+        messages=messages,
     )
-    return kw
 
 
-def reconstruct_tools_schema(toolsets: list[str]) -> object:
+def reconstruct_tools_schema(toolsets: list[str]) -> list[dict]:
     result = []
     for toolset in toolsets:
         for tool in all_tools[toolset]:
-            result.append(chatlas._tools.func_to_schema(tool))
-
+            try:
+                from chatlas._tools import func_to_schema
+                result.append(func_to_schema(tool))
+            except (ImportError, AttributeError):
+                # Fallback: build a minimal schema from the function signature
+                import inspect as _inspect
+                sig = _inspect.signature(tool)
+                result.append({
+                    "type": "function",
+                    "function": {
+                        "name": tool.__name__,
+                        "description": tool.__doc__ or "",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                name: {"type": "string"}
+                                for name in sig.parameters
+                            },
+                        },
+                    },
+                })
     return result
 
 
-def reconstruct_message(turn: MyTurn) -> object:
+def reconstruct_message(turn: chatlas.Turn) -> dict:
     return dict(
         role=turn.role,
-        contents=[reconstruct_content(content) for content in turn.contents],
+        contents=_turn_contents_to_dicts(turn),
     )
 
 
-def reconstruct_content(content: list[chatlas._content.Content]) -> object:
-    return str(content)
-
-def reconstruct_response_traces(turn: MyTurn) -> object:
-    # role: Literal["user", "assistant", "system"]
-    # contents: list[ContentUnion] = Field(default_factory=list)
-    # tokens: Optional[tuple[int, int]] = None
-    # finish_reason: Optional[str] = None
-    # completion: Optional[CompletionT] = Field(default=None, exclude=True)
-
-    # model_config = ConfigDict(arbitrary_types_allowed=True)
-
+def reconstruct_response_traces(turn: chatlas.Turn) -> dict:
     assert turn.role == "assistant"
 
     return {
@@ -388,6 +418,7 @@ def reconstruct_response_traces(turn: MyTurn) -> object:
             {"message": reconstruct_message(turn), "finish_reason": turn.finish_reason}
         ]
     }
+
 
 app = App(
     app_ui, server, bookmark_store="url", static_assets=Path(__file__).parent / "www"
