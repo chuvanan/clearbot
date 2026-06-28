@@ -65,6 +65,7 @@ def app_ui(request: Request):
             ui.help_text(
                 "Lower for coherence, higher for randomness."
             ),
+            ui.input_checkbox("logprobs", "Enable logprobs (OpenAI only)", value=False),
             ui.input_checkbox_group(
                 "tools",
                 "Tools",
@@ -125,6 +126,7 @@ class RequestParams(BaseModel):
     system_prompt: str
     temperature: float
     tools: list[str]
+    logprobs: bool = False
 
 
 class SessionState(BaseModel):
@@ -149,6 +151,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             system_prompt=input.system_prompt(),
             temperature=input.temperature(),
             tools=input.tools(),
+            logprobs=input.logprobs(),
         )
 
     @chat.on_user_submit
@@ -184,8 +187,12 @@ def server(input: Inputs, output: Outputs, session: Session):
         for tool in custom_tools():
             chat_client.register_tool(tool)
 
+        submit_kwargs: dict = dict(temperature=params.temperature)
+        if params.logprobs and params.model.startswith("gpt"):
+            submit_kwargs["log_probs"] = True
+
         resp = await chat_client.stream_async(
-            params.user_prompt, kwargs=dict(temperature=params.temperature)
+            params.user_prompt, kwargs=submit_kwargs
         )
 
         async def gen():
@@ -410,14 +417,43 @@ def reconstruct_message(turn: chatlas.Turn) -> dict:
     )
 
 
+def _extract_logprobs(turn: chatlas.Turn) -> list[dict] | None:
+    """Extract logprobs from the raw completion object, if available."""
+    completion = getattr(turn, "completion", None)
+    if completion is None:
+        return None
+    logprobs_data = []
+    for output_item in getattr(completion, "output", []):
+        for content in getattr(output_item, "content", []):
+            token_logprobs = getattr(content, "logprobs", None)
+            if token_logprobs:
+                for lp in token_logprobs:
+                    entry = {
+                        "token": lp.token,
+                        "logprob": lp.logprob,
+                    }
+                    top = getattr(lp, "top_logprobs", None)
+                    if top:
+                        entry["top_logprobs"] = [
+                            {"token": t.token, "logprob": t.logprob}
+                            for t in top
+                        ]
+                    logprobs_data.append(entry)
+    return logprobs_data or None
+
+
 def reconstruct_response_traces(turn: chatlas.Turn) -> dict:
     assert turn.role == "assistant"
 
-    return {
+    result: dict = {
         "choices": [
             {"message": reconstruct_message(turn), "finish_reason": turn.finish_reason}
         ]
     }
+    logprobs = _extract_logprobs(turn)
+    if logprobs is not None:
+        result["logprobs"] = logprobs
+    return result
 
 
 app = App(
