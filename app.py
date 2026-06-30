@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from typing import Callable
 
+from chatlas import StreamController
 from dotenv import load_dotenv
 from shiny import App, Inputs, Outputs, Session, bookmark, reactive, render, req, ui
 from starlette.requests import Request
@@ -151,10 +152,12 @@ def server(input: Inputs, output: Outputs, session: Session):
     )
     custom_tools: reactive.Value[list[Callable]] = reactive.Value([])
     awaiting_approval: reactive.Value[bool] = reactive.Value(False)
-    # Handle to the in-flight streaming task, so the Stop button / Esc key can
-    # cancel it. `is_streaming` drives the Stop button's visibility.
-    current_task: reactive.Value[object] = reactive.Value(None)
+    # `is_streaming` drives the Stop button's visibility. The StreamController is
+    # chatlas's cooperative-cancellation handle: the Stop button / Esc key call
+    # `ctrl.cancel()`, which stops the stream *after the current chunk* so it
+    # ends cleanly (the Chat widget gets its end signal and unlocks the input).
     is_streaming: reactive.Value[bool] = reactive.Value(False)
+    ctrl = StreamController()
 
     chat = ui.Chat("chat")
 
@@ -198,8 +201,9 @@ def server(input: Inputs, output: Outputs, session: Session):
         if params.logprobs and params.model.startswith("gpt"):
             submit_kwargs["log_probs"] = True
 
+        ctrl.reset()
         resp = await chat_client.stream_async(
-            params.user_prompt, kwargs=submit_kwargs
+            params.user_prompt, kwargs=submit_kwargs, controller=ctrl
         )
 
         async def gen():
@@ -209,7 +213,6 @@ def server(input: Inputs, output: Outputs, session: Session):
                 yield button_for_index(len(snapshots.get()))
 
         task = await chat.append_message_stream(gen())
-        current_task.set(task)
         is_streaming.set(True)
 
         @reactive.Effect
@@ -218,14 +221,24 @@ def server(input: Inputs, output: Outputs, session: Session):
             if status == "success":
                 resp_on_complete.destroy()
                 is_streaming.set(False)
+                # chatlas preserves the partial turn on a cancelled stream, so
+                # we commit either way — the truncated reply stays in context
+                # and the conversation can continue normally.
                 turns.set(chat_client.get_turns())
                 snapshots.set(snapshots.get() + [(params, chat_client.get_turns())])
                 with reactive.isolate():
                     ui.update_select(
                         "trace_num", choices=list(range(len(snapshots.get())))
                     )
-                    # After a planning response, offer to approve & execute.
-                    awaiting_approval.set(params.planning_mode)
+                    # After a (completed) planning response, offer to approve.
+                    awaiting_approval.set(params.planning_mode and not ctrl.cancelled)
+                if ctrl.cancelled:
+                    await chat.append_message(
+                        {
+                            "role": "assistant",
+                            "content": "⏹️ *Response interrupted. The partial reply above is kept in context.*",
+                        }
+                    )
                 threshold = input.compact_threshold() or 0
                 if threshold > 0 and estimate_tokens(turns.get()) > threshold:
                     await do_compaction(notify=False)
@@ -233,15 +246,6 @@ def server(input: Inputs, output: Outputs, session: Session):
             if status in ["error", "cancelled"]:
                 resp_on_complete.destroy()
                 is_streaming.set(False)
-                # A cancelled stream is discarded from context (the turn is
-                # never committed), so the model "forgets" the interrupted reply.
-                if status == "cancelled":
-                    await chat.append_message(
-                        {
-                            "role": "assistant",
-                            "content": "⏹️ *Response interrupted — not added to context.*",
-                        }
-                    )
 
     @chat.on_user_submit
     async def chat_on_user_submit(user_prompt: str):
@@ -323,11 +327,10 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.effect
     @reactive.event(input.stop_stream)
     def stop_stream():
-        # Cancelling the ExtendedTask aborts the async stream generator. The
-        # resp_on_complete effect then sees status "cancelled" and cleans up.
-        task = current_task()
-        if task is not None:
-            task.cancel()
+        # Cooperative cancel: chatlas stops the stream after the current chunk,
+        # so it ends cleanly and the Chat input unlocks. Cancelling the asyncio
+        # task directly would skip the stream's end signal and freeze the UI.
+        ctrl.cancel()
 
     @reactive.effect
     @reactive.event(input.clear)
