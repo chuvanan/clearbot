@@ -1,51 +1,56 @@
 import inspect
 import json
-import os
 from pathlib import Path
-from typing import Callable, Iterable, TypeAlias
+from typing import Callable
 
-import chatlas
 from dotenv import load_dotenv
-from pydantic import BaseModel
 from shiny import App, Inputs, Outputs, Session, bookmark, reactive, render, req, ui
 from starlette.requests import Request
 
+from commands import expand_command, load_commands
+from memory import compact_turns, estimate_tokens
+from models import (
+    MyTurn,
+    RequestParams,
+    SessionState,
+    build_chat_client,
+    default_model,
+    model_options,
+)
 from offcanvas import offcanvas_ui
-from tools import all_tools
-
-MyTurn: TypeAlias = chatlas.Turn
+from prompting import build_system_prompt
+from skills import load_skills
+from toolsets import resolve_tools
+from traces import reconstruct_request_traces, reconstruct_response_traces
 
 load_dotenv()
 
-model_options = {}
 
-if "OPENAI_API_KEY" in os.environ:
-    model_options["OpenAI"] = {
-        "gpt-4.1": "GPT-4.1 (slowest, smartest)",
-        "gpt-4.1-mini": "GPT-4.1 mini",
-        "gpt-4.1-nano": "GPT-4.1 nano (fastest, cheapest)",
-    }
-if "ANTHROPIC_API_KEY" in os.environ:
-    model_options["Anthropic"] = {
-        "claude-opus-4-8": "claude-opus-4-8",
-        "claude-sonnet-4-6": "claude-sonnet-4-6",
-        "claude-haiku-4-5-20251001": "claude-haiku-4-5",
-    }
-if "OPENROUTER_API_KEY" in os.environ:
-    model_options["OpenRouter"] = {
-        "openrouter/anthropic/claude-sonnet-4-5": "Claude Sonnet 4.5",
-        "openrouter/google/gemini-2.5-pro": "Gemini 2.5 Pro",
-        "openrouter/meta-llama/llama-4-maverick": "Llama 4 Maverick",
-        "openrouter/deepseek/deepseek-r1-0528": "DeepSeek R1",
-        "openrouter/mistralai/mistral-small-3.2-24b-instruct": "Mistral Small 3.2",
-    }
+def skills_ui():
+    """Render the skills checkbox group for the sidebar.
 
-if len(model_options) == 0:
-    raise ValueError(
-        "No API keys found. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, and/or OPENROUTER_API_KEY in your environment."
+    Only descriptions are shown here; the model likewise only sees descriptions
+    until it calls `load_skill`.
+    """
+    skills = load_skills()
+    if not skills:
+        return ui.TagList()
+    choices = {name: skill.name for name, skill in skills.items()}
+    return ui.input_checkbox_group("skills", "Skills", choices)
+
+
+def commands_help_ui():
+    """Render the list of available slash commands for the sidebar."""
+    cmds = load_commands()
+    if cmds:
+        items = "\n".join(f"- `/{c.name}` — {c.description}" for c in cmds.values())
+    else:
+        items = "_No commands found in `commands/`._"
+    return ui.TagList(
+        ui.hr(),
+        ui.markdown("**Slash commands** (type in chat):"),
+        ui.markdown(items),
     )
-
-default_model = next(iter(next(iter(model_options.values())).keys()))
 
 
 def app_ui(request: Request):
@@ -66,6 +71,10 @@ def app_ui(request: Request):
                 "Lower for coherence, higher for randomness."
             ),
             ui.input_checkbox("logprobs", "Enable logprobs (OpenAI only)", value=False),
+            ui.input_checkbox("planning_mode", "Planning mode", value=False),
+            ui.help_text(
+                "Asks for a plan first and hides write tools. Approve to execute."
+            ),
             ui.input_checkbox_group(
                 "tools",
                 "Tools",
@@ -74,6 +83,7 @@ def app_ui(request: Request):
                     "websearch": "Web search",
                 },
             ),
+            skills_ui(),
             ui.markdown("⚠️ Runs arbitrary Python code."),
             ui.input_text_area(
                 "custom_tool_code",
@@ -82,6 +92,20 @@ def app_ui(request: Request):
                 placeholder="def my_tool(name: str) -> str:\n    \"\"\"Say hello.\"\"\"\n    return f\"Hello, {name}!\"",
             ),
             ui.input_action_button("register_tools", "Register tools", class_="btn-sm"),
+            ui.hr(),
+            ui.markdown("**Memory**"),
+            ui.output_text("token_estimate"),
+            ui.input_numeric(
+                "compact_threshold",
+                "Auto-compact above (tokens, 0 = off)",
+                value=0,
+                min=0,
+                step=500,
+            ),
+            ui.input_action_button(
+                "compact", "🧹 Compact context", class_="btn-sm"
+            ),
+            commands_help_ui(),
             width=325,
             title="Settings",
             open="closed",
@@ -96,6 +120,7 @@ def app_ui(request: Request):
             style="--bs-offcanvas-width: min(600px, 100vw);",
         ),
         ui.chat_ui("chat"),
+        ui.output_ui("approval_bar"),
         ui.input_action_button(
             "clear",
             "📝 New Chat",
@@ -118,29 +143,13 @@ def app_ui(request: Request):
     )
 
 
-class RequestParams(BaseModel):
-    """A snapshot of the parameter values at the moment of a request"""
-
-    model: str
-    user_prompt: str
-    system_prompt: str
-    temperature: float
-    tools: list[str]
-    logprobs: bool = False
-
-
-class SessionState(BaseModel):
-    turns: list[MyTurn]
-    snapshots: list[tuple[RequestParams, list[MyTurn]]]
-    custom_tool_code: str = ""
-
-
 def server(input: Inputs, output: Outputs, session: Session):
     turns: reactive.Value[list[MyTurn]] = reactive.Value([])
     snapshots: reactive.Value[list[tuple[RequestParams, list[MyTurn]]]] = (
         reactive.Value([])
     )
     custom_tools: reactive.Value[list[Callable]] = reactive.Value([])
+    awaiting_approval: reactive.Value[bool] = reactive.Value(False)
 
     chat = ui.Chat("chat")
 
@@ -152,40 +161,33 @@ def server(input: Inputs, output: Outputs, session: Session):
             temperature=input.temperature(),
             tools=input.tools(),
             logprobs=input.logprobs(),
+            skills=list(input.skills()) if "skills" in input else [],
+            planning_mode=input.planning_mode(),
         )
 
-    @chat.on_user_submit
-    async def chat_on_user_submit(user_prompt: str):
-        these_turns = turns()
-        params: RequestParams = current_params(user_prompt)
+    async def run_request(params: RequestParams):
+        """Run one model request from a fully-resolved RequestParams.
 
-        if params.model.startswith("claude"):
-            chat_client = chatlas.ChatAnthropic(
-                model=params.model,
-                system_prompt=params.system_prompt,
-            )
-        elif params.model.startswith("gpt"):
-            chat_client = chatlas.ChatOpenAI(
-                model=params.model,
-                system_prompt=params.system_prompt,
-            )
-        elif params.model.startswith("openrouter/"):
-            chat_client = chatlas.ChatOpenRouter(
-                model=params.model.removeprefix("openrouter/"),
-                system_prompt=params.system_prompt,
-            )
-        else:
-            raise ValueError(f"Unknown model: {params.model}")
+        Shared by normal submits and the planning "Approve & execute" button so
+        the request-building logic lives in exactly one place.
+        """
+        these_turns = turns()
+
+        chat_client = build_chat_client(params.model, build_system_prompt(params))
 
         if these_turns:
             chat_client.set_turns(these_turns)
 
-        for toolset in input.tools():
-            for tool in all_tools[toolset]:
-                chat_client.register_tool(tool)
-
-        for tool in custom_tools():
+        # resolve_tools expands toolsets, adds load_skill when skills are
+        # enabled (progressive disclosure), and drops write tools in planning
+        # mode. The trace reconstructs from the same function, so they agree.
+        for tool in resolve_tools(params):
             chat_client.register_tool(tool)
+
+        # Custom (runtime) tools are also gated off while planning.
+        if not params.planning_mode:
+            for tool in custom_tools():
+                chat_client.register_tool(tool)
 
         submit_kwargs: dict = dict(temperature=params.temperature)
         if params.logprobs and params.model.startswith("gpt"):
@@ -213,9 +215,38 @@ def server(input: Inputs, output: Outputs, session: Session):
                     ui.update_select(
                         "trace_num", choices=list(range(len(snapshots.get())))
                     )
+                    # After a planning response, offer to approve & execute.
+                    awaiting_approval.set(params.planning_mode)
+                threshold = input.compact_threshold() or 0
+                if threshold > 0 and estimate_tokens(turns.get()) > threshold:
+                    await do_compaction(notify=False)
                 await session.bookmark()
             if task.status() in ["error", "cancelled"]:
                 resp_on_complete.destroy()
+
+    @chat.on_user_submit
+    async def chat_on_user_submit(user_prompt: str):
+        # Commands are just prompt macros: expand `/name args` into the
+        # template before anything reaches the model. The chat UI still shows
+        # what the user typed; the trace shows the expanded text.
+        expanded_prompt, command_name = expand_command(user_prompt)
+        params: RequestParams = current_params(expanded_prompt)
+        params.command = command_name
+        awaiting_approval.set(False)
+        await run_request(params)
+
+    @reactive.effect
+    @reactive.event(input.approve_plan)
+    async def approve_plan():
+        # Approving a plan is just another turn — with planning mode off, so
+        # the model now has the full toolset and is told to proceed.
+        awaiting_approval.set(False)
+        ui.update_checkbox("planning_mode", value=False)
+        prompt = "The plan is approved. Proceed with executing it."
+        await chat.append_message({"role": "user", "content": prompt})
+        params = current_params(prompt)
+        params.planning_mode = False
+        await run_request(params)
 
     @session.bookmark.on_bookmarked
     async def session_on_bookmarked(url: str):
@@ -276,6 +307,7 @@ def server(input: Inputs, output: Outputs, session: Session):
         await chat.clear_messages()
         turns.set([])
         snapshots.set([])
+        awaiting_approval.set(False)
 
     @reactive.effect
     @reactive.event(input.register_tools)
@@ -317,6 +349,54 @@ def server(input: Inputs, output: Outputs, session: Session):
     def button_for_index(i: int) -> str:
         return f"""\n\n<a class="text-decoration-none" href="#" data-snapshot-index="{i}" title="Inspect this request/response">{{…}}</a>"""
 
+    @render.text
+    def token_estimate():
+        return f"~{estimate_tokens(turns())} tokens · {len(turns())} turns in context"
+
+    async def do_compaction(notify: bool) -> bool:
+        """Compact the live context. Returns True if anything changed."""
+        current = turns()
+        before = estimate_tokens(current)
+        new_turns = await compact_turns(current, input.model())
+        if new_turns is current or len(new_turns) >= len(current):
+            if notify:
+                ui.notification_show("Not enough history to compact.", type="message")
+            return False
+        turns.set(new_turns)
+        after = estimate_tokens(new_turns)
+        await chat.append_message(
+            {
+                "role": "assistant",
+                "content": (
+                    f"🧹 *Context compacted: {len(current)} → {len(new_turns)} turns, "
+                    f"~{before} → ~{after} tokens. Open the next trace to see the "
+                    f"summary in the request.*"
+                ),
+            }
+        )
+        return True
+
+    @reactive.effect
+    @reactive.event(input.compact)
+    async def manual_compact():
+        await do_compaction(notify=True)
+
+    @render.ui
+    def approval_bar():
+        if not awaiting_approval():
+            return None
+        return ui.div(
+            ui.input_action_button(
+                "approve_plan",
+                "✅ Approve & execute",
+                class_="btn-success btn-sm",
+            ),
+            style=(
+                "position: fixed; bottom: 5.5rem; left: 50%; "
+                "transform: translateX(-50%); z-index: 100;"
+            ),
+        )
+
     @render.ui
     def trace_display():
         req(len(snapshots()) > 0)
@@ -333,127 +413,10 @@ def server(input: Inputs, output: Outputs, session: Session):
 
         return ui.TagList(
             ui.h4("Request"),
-            # ui.Tag("json-viewer", data=params.model_dump_json(indent=2)),
             ui.Tag("json-viewer", data=json.dumps(dump)),
             ui.h4("Response", class_="mt-3"),
             ui.Tag("json-viewer", data=json.dumps(resp)),
         )
-
-
-def _turn_contents_to_dicts(turn: chatlas.Turn) -> list[dict]:
-    """Convert turn contents to serializable dicts using public API only."""
-    results = []
-    for content in turn.contents:
-        if isinstance(content, chatlas.ContentToolRequest):
-            results.append({
-                "type": "tool_request",
-                "id": content.id,
-                "name": content.name,
-                "arguments": content.arguments,
-            })
-        elif isinstance(content, chatlas.ContentToolResult):
-            results.append({
-                "type": "tool_result",
-                "id": content.id,
-                "value": str(content.get_model_value()),
-            })
-        else:
-            results.append({
-                "type": type(content).__name__,
-                "text": str(content),
-            })
-    return results
-
-
-def reconstruct_request_traces(
-    params: RequestParams, turns: Iterable[chatlas.Turn]
-) -> dict:
-    tools_schema = reconstruct_tools_schema(params.tools)
-
-    messages = [
-        {"role": turn.role, "contents": _turn_contents_to_dicts(turn)}
-        for turn in turns
-    ]
-    return dict(
-        model=params.model,
-        temperature=params.temperature,
-        tools=tools_schema,
-        messages=messages,
-    )
-
-
-def reconstruct_tools_schema(toolsets: list[str]) -> list[dict]:
-    result = []
-    for toolset in toolsets:
-        for tool in all_tools[toolset]:
-            try:
-                from chatlas._tools import func_to_schema
-                result.append(func_to_schema(tool))
-            except (ImportError, AttributeError):
-                # Fallback: build a minimal schema from the function signature
-                import inspect as _inspect
-                sig = _inspect.signature(tool)
-                result.append({
-                    "type": "function",
-                    "function": {
-                        "name": tool.__name__,
-                        "description": tool.__doc__ or "",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                name: {"type": "string"}
-                                for name in sig.parameters
-                            },
-                        },
-                    },
-                })
-    return result
-
-
-def reconstruct_message(turn: chatlas.Turn) -> dict:
-    return dict(
-        role=turn.role,
-        contents=_turn_contents_to_dicts(turn),
-    )
-
-
-def _extract_logprobs(turn: chatlas.Turn) -> list[dict] | None:
-    """Extract logprobs from the raw completion object, if available."""
-    completion = getattr(turn, "completion", None)
-    if completion is None:
-        return None
-    logprobs_data = []
-    for output_item in getattr(completion, "output", []):
-        for content in getattr(output_item, "content", []):
-            token_logprobs = getattr(content, "logprobs", None)
-            if token_logprobs:
-                for lp in token_logprobs:
-                    entry = {
-                        "token": lp.token,
-                        "logprob": lp.logprob,
-                    }
-                    top = getattr(lp, "top_logprobs", None)
-                    if top:
-                        entry["top_logprobs"] = [
-                            {"token": t.token, "logprob": t.logprob}
-                            for t in top
-                        ]
-                    logprobs_data.append(entry)
-    return logprobs_data or None
-
-
-def reconstruct_response_traces(turn: chatlas.Turn) -> dict:
-    assert turn.role == "assistant"
-
-    result: dict = {
-        "choices": [
-            {"message": reconstruct_message(turn), "finish_reason": turn.finish_reason}
-        ]
-    }
-    logprobs = _extract_logprobs(turn)
-    if logprobs is not None:
-        result["logprobs"] = logprobs
-    return result
 
 
 app = App(
