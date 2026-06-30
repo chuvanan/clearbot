@@ -120,6 +120,7 @@ def app_ui(request: Request):
             style="--bs-offcanvas-width: min(600px, 100vw);",
         ),
         ui.chat_ui("chat"),
+        ui.output_ui("stop_bar"),
         ui.output_ui("approval_bar"),
         ui.input_action_button(
             "clear",
@@ -150,6 +151,10 @@ def server(input: Inputs, output: Outputs, session: Session):
     )
     custom_tools: reactive.Value[list[Callable]] = reactive.Value([])
     awaiting_approval: reactive.Value[bool] = reactive.Value(False)
+    # Handle to the in-flight streaming task, so the Stop button / Esc key can
+    # cancel it. `is_streaming` drives the Stop button's visibility.
+    current_task: reactive.Value[object] = reactive.Value(None)
+    is_streaming: reactive.Value[bool] = reactive.Value(False)
 
     chat = ui.Chat("chat")
 
@@ -204,11 +209,15 @@ def server(input: Inputs, output: Outputs, session: Session):
                 yield button_for_index(len(snapshots.get()))
 
         task = await chat.append_message_stream(gen())
+        current_task.set(task)
+        is_streaming.set(True)
 
         @reactive.Effect
         async def resp_on_complete():
-            if task.status() == "success":
+            status = task.status()
+            if status == "success":
                 resp_on_complete.destroy()
+                is_streaming.set(False)
                 turns.set(chat_client.get_turns())
                 snapshots.set(snapshots.get() + [(params, chat_client.get_turns())])
                 with reactive.isolate():
@@ -221,8 +230,18 @@ def server(input: Inputs, output: Outputs, session: Session):
                 if threshold > 0 and estimate_tokens(turns.get()) > threshold:
                     await do_compaction(notify=False)
                 await session.bookmark()
-            if task.status() in ["error", "cancelled"]:
+            if status in ["error", "cancelled"]:
                 resp_on_complete.destroy()
+                is_streaming.set(False)
+                # A cancelled stream is discarded from context (the turn is
+                # never committed), so the model "forgets" the interrupted reply.
+                if status == "cancelled":
+                    await chat.append_message(
+                        {
+                            "role": "assistant",
+                            "content": "⏹️ *Response interrupted — not added to context.*",
+                        }
+                    )
 
     @chat.on_user_submit
     async def chat_on_user_submit(user_prompt: str):
@@ -300,6 +319,15 @@ def server(input: Inputs, output: Outputs, session: Session):
                         "content": "\n".join([str(x) for x in turn.contents]) + suffix,
                     }
                 )
+
+    @reactive.effect
+    @reactive.event(input.stop_stream)
+    def stop_stream():
+        # Cancelling the ExtendedTask aborts the async stream generator. The
+        # resp_on_complete effect then sees status "cancelled" and cleans up.
+        task = current_task()
+        if task is not None:
+            task.cancel()
 
     @reactive.effect
     @reactive.event(input.clear)
@@ -380,6 +408,22 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.event(input.compact)
     async def manual_compact():
         await do_compaction(notify=True)
+
+    @render.ui
+    def stop_bar():
+        if not is_streaming():
+            return None
+        return ui.div(
+            ui.input_action_button(
+                "stop_stream",
+                "⏹ Stop (Esc)",
+                class_="btn-danger btn-sm",
+            ),
+            style=(
+                "position: fixed; bottom: 5.5rem; left: 50%; "
+                "transform: translateX(-50%); z-index: 100;"
+            ),
+        )
 
     @render.ui
     def approval_bar():
