@@ -12,6 +12,18 @@ Open the printed URL. Click the **Settings** label on the left to expand the sid
 
 > **The most important habit:** after every model response, click the small `{…}` link next to it. This opens the **Trace Inspector**, showing the reconstructed **Request** (model, system prompt, tools, message history) and **Response** (message, finish reason, logprobs). Everything below is about watching these change.
 
+### Optional: bring your own model (BYOK)
+
+Clearbot ships with whichever providers your environment keys unlock, but it can talk to *any* OpenAI-compatible endpoint — a local model via Ollama, a vLLM/LiteLLM proxy, or a gateway like Groq or Together.
+
+1. In **Model**, choose **Custom model + endpoint…**. Three fields appear.
+2. Fill them in, e.g. for a local Ollama server: endpoint `http://localhost:11434/v1`, model `llama3.2`, and any non-empty key.
+3. Chat as normal, then open the trace. Notice the request carries an `_endpoint` field pointing at your URL — but the API key is nowhere in it.
+
+That last point is the lesson: the key is used only for the live call. It is never written into the URL bookmark or the trace, while the (non-secret) endpoint is shown so you can see exactly where the request went.
+
+**Takeaway:** "which model" is just a base URL + a model string + a key — there is nothing provider-magic about it.
+
 ## 1. System prompt & temperature — the basic knobs
 
 1. In the sidebar, set **System prompt** to `You are a pirate. Always answer in pirate speak.`

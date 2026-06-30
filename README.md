@@ -9,6 +9,7 @@ It is built using [Shiny](https://shiny.posit.co/py/) (Python) and [Chatlas](htt
 Each feature surfaces its underlying mechanism in the **Trace Inspector** (the `{…}` link next to each response).
 
 - **System prompt, temperature, logprobs** — the basic knobs of an LLM call.
+- **BYOK (custom model + endpoint)** — pick *Custom model + endpoint…* in the model list to point Clearbot at any OpenAI-compatible endpoint (Ollama, vLLM, Groq, Together, LiteLLM, …) with your own base URL, model name, and key. *The trace shows the custom endpoint; the key is never bookmarked or traced.*
 - **Tools** — toggle-able filesystem access and web search, plus a box to register your own Python functions as custom tools at runtime.
 - **Commands** — file-based slash commands (`commands/*.md`). Typing `/summarize some text` expands a prompt template before anything reaches the model. The chat shows what you typed; the trace shows the expanded prompt. *Commands are just macros.*
 - **Skills** — file-based skills (`skills/<name>/SKILL.md`). Only a skill's *name and description* are injected into the system prompt; the full instructions are loaded on demand when the model calls the `load_skill` tool. *This is progressive disclosure — visible in the trace.*
@@ -20,11 +21,23 @@ Each feature surfaces its underlying mechanism in the **Trace Inspector** (the `
 
 You can either set these environment variables manually, or include a [`.env` file](https://saurabh-kumar.com/python-dotenv/) in the root directory of your project.
 
-At least one of the following environment variables is **required**:
+To use a built-in provider model, set at least one of the following environment variables:
 
 - `OPENAI_API_KEY` — used to access OpenAI LLM models.
 - `ANTHROPIC_API_KEY` — used to access Anthropic LLM models.
 - `OPENROUTER_API_KEY` — used to access models via OpenRouter (Gemini, Llama, DeepSeek, Mistral, etc.).
+
+None of these are strictly required: you can instead select **Custom model + endpoint…** in the model picker and supply your own endpoint and key at runtime (see [BYOK](#byok-bring-your-own-key) below). Clearbot starts even with no keys set.
+
+### BYOK (bring your own key)
+
+Selecting **Custom model + endpoint…** in the model list reveals three sidebar fields:
+
+- **Endpoint (base URL)** — any OpenAI-compatible endpoint, e.g. `http://localhost:11434/v1` (Ollama), `https://api.groq.com/openai/v1`, or a vLLM/LiteLLM proxy.
+- **Model name** — the model id as that endpoint expects it (e.g. `llama-3.3-70b-versatile`).
+- **API key** — sent only with live requests. It is **never** written to the URL bookmark or shown in the Trace Inspector. The base URL is not secret, so it *is* shown in the trace (as `_endpoint`).
+
+Custom endpoints use the Chat Completions API, which third-party backends implement most widely.
 
 ### Web search
 
@@ -50,7 +63,7 @@ New to the app? Walk through [`TUTORIAL.md`](TUTORIAL.md) to explore each featur
 | File | Responsibility |
 | --- | --- |
 | `app.py` | Shiny UI layout and server wiring. |
-| `models.py` | Available models, request/session state, and the `build_chat_client` factory. |
+| `models.py` | Available models (incl. the BYOK custom option), request/session state, and the `build_chat_client` factory. |
 | `tools.py` | Built-in tool definitions (`filesystem`, `websearch`). |
 | `toolsets.py` | Resolves the effective tool list for a request (toolsets + skills + planning gating). |
 | `prompting.py` | Builds the effective system prompt (user prompt + skills + planning). |
