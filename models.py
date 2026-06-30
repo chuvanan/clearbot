@@ -17,6 +17,11 @@ load_dotenv()
 
 MyTurn: TypeAlias = chatlas.Turn
 
+# Sentinel model id for "bring your own key": the user supplies a custom
+# OpenAI-compatible endpoint, model name, and API key at runtime. Selecting it
+# in the model picker reveals the BYOK inputs in the sidebar.
+CUSTOM_MODEL_ID = "__custom__"
+
 model_options: dict[str, dict[str, str]] = {}
 
 if "OPENAI_API_KEY" in os.environ:
@@ -40,10 +45,10 @@ if "OPENROUTER_API_KEY" in os.environ:
         "openrouter/mistralai/mistral-small-3.2-24b-instruct": "Mistral Small 3.2",
     }
 
-if len(model_options) == 0:
-    raise ValueError(
-        "No API keys found. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, and/or OPENROUTER_API_KEY in your environment."
-    )
+# BYOK is always available: even with no provider keys in the environment, a
+# user can point Clearbot at any OpenAI-compatible endpoint with their own key.
+# This is also why we no longer hard-fail when no env keys are found.
+model_options["Custom (BYOK)"] = {CUSTOM_MODEL_ID: "Custom model + endpoint…"}
 
 default_model = next(iter(next(iter(model_options.values())).keys()))
 
@@ -60,6 +65,11 @@ class RequestParams(BaseModel):
     skills: list[str] = []
     planning_mode: bool = False
     command: str | None = None
+    # BYOK: the custom endpoint a request was sent to. The model name lives in
+    # `model`. We deliberately do NOT store the API key here — RequestParams is
+    # bookmarked to the URL and shown in the Trace Inspector, so a secret must
+    # never land in it. The base URL is not secret and is informative to show.
+    base_url: str | None = None
 
 
 class SessionState(BaseModel):
@@ -68,12 +78,34 @@ class SessionState(BaseModel):
     custom_tool_code: str = ""
 
 
-def build_chat_client(model: str, system_prompt: str) -> chatlas.Chat:
+def build_chat_client(
+    model: str,
+    system_prompt: str,
+    *,
+    base_url: str | None = None,
+    api_key: str | None = None,
+) -> chatlas.Chat:
     """Construct a chatlas client for the given model id and system prompt.
 
-    The model id prefix selects the provider. This is the single place that
-    knows how to map a model id to a concrete chatlas client.
+    This is the single place that knows how to map a model to a concrete chatlas
+    client.
+
+    - BYOK: when `base_url` is given, the request goes to a custom
+      OpenAI-compatible endpoint using the supplied `api_key` and `model` name.
+      This covers local servers (Ollama, llama.cpp) and hosted gateways
+      (Together, Groq, Fireworks, vLLM, …) — almost all speak the OpenAI API.
+    - Otherwise the model id prefix selects a built-in provider.
     """
+    if base_url:
+        # Use the Chat Completions API (not the Responses API) for custom
+        # endpoints: it is the lowest common denominator that third-party
+        # OpenAI-compatible backends actually implement.
+        return chatlas.ChatOpenAICompletions(
+            model=model,
+            system_prompt=system_prompt,
+            base_url=base_url,
+            api_key=api_key,
+        )
     if model.startswith("claude"):
         return chatlas.ChatAnthropic(model=model, system_prompt=system_prompt)
     elif model.startswith("gpt"):

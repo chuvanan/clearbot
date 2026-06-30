@@ -47,13 +47,21 @@ def _render_transcript(turns: list[MyTurn]) -> str:
 
 
 async def compact_turns(
-    turns: list[MyTurn], model: str, keep_recent: int = 2
+    turns: list[MyTurn],
+    model: str,
+    keep_recent: int = 2,
+    *,
+    base_url: str | None = None,
+    api_key: str | None = None,
 ) -> list[MyTurn]:
     """Summarize older turns, keeping the last `keep_recent` turns verbatim.
 
     Returns a new turns list: [summary_user, summary_ack, *recent]. The recent
     slice is adjusted to start on a user turn so role alternation stays valid.
     Returns the input unchanged if there is too little to compact.
+
+    `base_url`/`api_key` are forwarded to `build_chat_client` so compaction uses
+    the same (possibly BYOK) endpoint as the conversation it is summarizing.
     """
     if len(turns) <= keep_recent + 1:
         return turns
@@ -66,7 +74,9 @@ async def compact_turns(
     if not older:
         return turns
 
-    summarizer = build_chat_client(model, SUMMARY_SYSTEM_PROMPT)
+    summarizer = build_chat_client(
+        model, SUMMARY_SYSTEM_PROMPT, base_url=base_url, api_key=api_key
+    )
     resp = await summarizer.stream_async(_render_transcript(older))
     summary = ""
     async for chunk in resp:

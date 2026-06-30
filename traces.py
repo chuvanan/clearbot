@@ -54,6 +54,10 @@ def reconstruct_request_traces(
         tools=tools_schema,
         messages=messages,
     )
+    if params.base_url:
+        # BYOK: the custom endpoint this request was sent to. The API key is
+        # intentionally absent here — it is never stored in the snapshot.
+        result["_endpoint"] = params.base_url
     if params.command:
         # Annotation (not part of the real API payload): shows that the last
         # user message was produced by expanding this slash command.

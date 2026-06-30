@@ -11,6 +11,7 @@ from starlette.requests import Request
 from commands import expand_command, load_commands
 from memory import compact_turns, estimate_tokens
 from models import (
+    CUSTOM_MODEL_ID,
     MyTurn,
     RequestParams,
     SessionState,
@@ -63,6 +64,7 @@ def app_ui(request: Request):
                 model_options,
                 selected=default_model,
             ),
+            ui.output_ui("byok_inputs"),
             ui.input_text_area("system_prompt", "System prompt", rows=6),
             ui.help_text("Instructs the LLM how to behave"),
             ui.input_slider(
@@ -161,9 +163,30 @@ def server(input: Inputs, output: Outputs, session: Session):
 
     chat = ui.Chat("chat")
 
+    def selected_model_config() -> tuple[str, str | None, str | None]:
+        """Resolve (model_name, base_url, api_key) for the current selection.
+
+        For built-in providers, base_url/api_key are None (chatlas uses the
+        provider default + env key). For BYOK, read the custom inputs — guarded,
+        since they only exist in the DOM while the custom option is selected. The
+        api_key is for live use only and is never persisted in RequestParams.
+        """
+        if input.model() != CUSTOM_MODEL_ID:
+            return (input.model(), None, None)
+
+        def field(name: str) -> str:
+            return (input[name]() or "").strip() if name in input else ""
+
+        return (
+            field("custom_model"),
+            field("custom_base_url") or None,
+            field("custom_api_key") or None,
+        )
+
     def current_params(user_prompt: str) -> RequestParams:
+        model_name, base_url, _ = selected_model_config()
         return RequestParams(
-            model=input.model(),
+            model=model_name,
             user_prompt=user_prompt,
             system_prompt=input.system_prompt(),
             temperature=input.temperature(),
@@ -171,6 +194,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             logprobs=input.logprobs(),
             skills=list(input.skills()) if "skills" in input else [],
             planning_mode=input.planning_mode(),
+            base_url=base_url,
         )
 
     async def run_request(params: RequestParams):
@@ -179,9 +203,24 @@ def server(input: Inputs, output: Outputs, session: Session):
         Shared by normal submits and the planning "Approve & execute" button so
         the request-building logic lives in exactly one place.
         """
+        # BYOK needs both a model name and an endpoint; bail early with a clear
+        # message rather than letting an empty request hit the provider.
+        if input.model() == CUSTOM_MODEL_ID and not (params.model and params.base_url):
+            ui.notification_show(
+                "Custom model needs both a model name and an endpoint (base URL).",
+                type="warning",
+            )
+            return
+
         these_turns = turns()
 
-        chat_client = build_chat_client(params.model, build_system_prompt(params))
+        api_key = selected_model_config()[2]
+        chat_client = build_chat_client(
+            params.model,
+            build_system_prompt(params),
+            base_url=params.base_url,
+            api_key=api_key,
+        )
 
         if these_turns:
             chat_client.set_turns(these_turns)
@@ -388,7 +427,10 @@ def server(input: Inputs, output: Outputs, session: Session):
         """Compact the live context. Returns True if anything changed."""
         current = turns()
         before = estimate_tokens(current)
-        new_turns = await compact_turns(current, input.model())
+        model_name, base_url, api_key = selected_model_config()
+        new_turns = await compact_turns(
+            current, model_name, base_url=base_url, api_key=api_key
+        )
         if new_turns is current or len(new_turns) >= len(current):
             if notify:
                 ui.notification_show("Not enough history to compact.", type="message")
@@ -411,6 +453,32 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.event(input.compact)
     async def manual_compact():
         await do_compaction(notify=True)
+
+    @render.ui
+    def byok_inputs():
+        # Only shown when the custom model is selected. The API key uses a
+        # password field and is never written to RequestParams/SessionState, so
+        # it stays out of the URL bookmark and the Trace Inspector.
+        if input.model() != CUSTOM_MODEL_ID:
+            return None
+        return ui.TagList(
+            ui.input_text(
+                "custom_base_url",
+                "Endpoint (base URL)",
+                placeholder="https://api.groq.com/openai/v1",
+            ),
+            ui.input_text(
+                "custom_model",
+                "Model name",
+                placeholder="llama-3.3-70b-versatile",
+            ),
+            ui.input_password("custom_api_key", "API key"),
+            ui.help_text(
+                "Any OpenAI-compatible endpoint (Ollama, vLLM, Groq, Together…). "
+                "The key is used only for live requests — never bookmarked or "
+                "shown in the trace."
+            ),
+        )
 
     @render.ui
     def stop_bar():
