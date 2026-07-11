@@ -142,7 +142,7 @@ def app_ui(request: Request):
                 """
             ),
         ),
-        title="Clearbot",
+        title="Abidibot",
         fillable=True,
     )
 
