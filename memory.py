@@ -2,7 +2,9 @@
 
 A model's context window is finite. As a conversation grows, older turns are
 summarized into a compact note so the important facts survive while the token
-count shrinks. This module estimates the current size and performs compaction.
+count shrinks. This module reports provider token usage when Chatlas has it,
+keeps a rough context-size estimate for pre-request compaction decisions, and
+performs compaction.
 
 The mechanism is deliberately visible in the Trace Inspector: before compaction
 the request carries many message turns; after, it carries a short summary turn
@@ -35,6 +37,58 @@ def estimate_tokens(turns: list[MyTurn]) -> int:
         for content in turn.contents:
             chars += len(str(content))
     return chars // 4
+
+
+def chatlas_token_usage(turns: list[MyTurn]) -> dict[str, int] | None:
+    """Aggregate Chatlas/provider-reported token usage from assistant turns.
+
+    Chatlas stores provider usage on completed assistant turns as
+    `(input_tokens, output_tokens, cached_input_tokens)`. These are reported by
+    the provider after a request completes, so they are exact usage data when
+    available. They are not available for manually-created turns such as the
+    summary acknowledgement inserted by context compaction.
+    """
+    input_tokens = 0
+    output_tokens = 0
+    cached_input_tokens = 0
+    found = False
+
+    for turn in turns:
+        tokens = getattr(turn, "tokens", None)
+        if tokens is None:
+            continue
+        found = True
+        input_tokens += tokens[0]
+        output_tokens += tokens[1]
+        cached_input_tokens += tokens[2]
+
+    if not found:
+        return None
+
+    return {
+        "input": input_tokens,
+        "output": output_tokens,
+        "cached_input": cached_input_tokens,
+        "total": input_tokens + output_tokens + cached_input_tokens,
+    }
+
+
+def format_chatlas_token_usage(turns: list[MyTurn]) -> str:
+    """Human-readable provider token usage for the sidebar."""
+    usage = chatlas_token_usage(turns)
+    turn_count = len(turns)
+    if usage is None:
+        return f"Provider token usage unavailable · {turn_count} turns in context"
+
+    cached = ""
+    if usage["cached_input"]:
+        cached = f", {usage['cached_input']:,} cached input"
+
+    return (
+        "Chatlas-reported usage: "
+        f"{usage['input']:,} input, {usage['output']:,} output{cached} "
+        f"· {turn_count} turns in context"
+    )
 
 
 def _render_transcript(turns: list[MyTurn]) -> str:

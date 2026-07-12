@@ -10,7 +10,7 @@ from shiny import App, Inputs, Outputs, Session, bookmark, reactive, render, req
 from starlette.requests import Request
 
 from commands import expand_command, load_commands
-from memory import compact_turns, estimate_tokens
+from memory import compact_turns, estimate_tokens, format_chatlas_token_usage
 from models import (
     CUSTOM_MODEL_ID,
     MyTurn,
@@ -113,7 +113,7 @@ def app_ui(request: Request):
             ui.output_text("token_estimate"),
             ui.input_numeric(
                 "compact_threshold",
-                "Auto-compact above (tokens, 0 = off)",
+                "Auto-compact above estimated context tokens (0 = off)",
                 value=0,
                 min=0,
                 step=500,
@@ -491,7 +491,7 @@ def server(input: Inputs, output: Outputs, session: Session):
 
     @render.text
     def token_estimate():
-        return f"~{estimate_tokens(turns())} tokens · {len(turns())} turns in context"
+        return format_chatlas_token_usage(turns())
 
     async def do_compaction(notify: bool) -> bool:
         """Compact the live context. Returns True if anything changed."""
@@ -512,8 +512,8 @@ def server(input: Inputs, output: Outputs, session: Session):
                 "role": "assistant",
                 "content": (
                     f"🧹 *Context compacted: {len(current)} → {len(new_turns)} turns, "
-                    f"~{before} → ~{after} tokens. Open the next trace to see the "
-                    f"summary in the request.*"
+                    f"estimated context ~{before} → ~{after} tokens. Open the next "
+                    f"trace to see the summary in the request.*"
                 ),
             }
         )

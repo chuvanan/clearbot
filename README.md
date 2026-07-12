@@ -16,7 +16,7 @@ Each feature surfaces its underlying mechanism in the **Trace Inspector** (the `
 - **Commands** — file-based slash commands (`commands/*.md`). Typing `/summarize some text` expands a prompt template before anything reaches the model. The chat shows what you typed; the trace shows the expanded prompt. *Commands are just macros.*
 - **Skills** — file-based skills (`skills/<name>/SKILL.md`). Only a skill's *name and description* are injected into the system prompt; the full instructions are loaded on demand when the model calls the `load_skill` tool. *This is progressive disclosure — visible in the trace.*
 - **Planning mode** — a toggle that appends a "make a plan, don't act yet" instruction to the system prompt and removes state-changing tools. An **Approve & execute** button then re-runs with the full toolset. *A "mode" is just an injected instruction plus a gated toolset.*
-- **Memory / compaction** — a running token estimate, a manual **Compact context** button, and an auto-compact threshold. Older turns are summarized into a compact note so the conversation stays under the context budget. *Watch a long history collapse into a summary in the trace.*
+- **Memory / compaction** — Chatlas-reported provider token usage, a manual **Compact context** button, and an estimated-context auto-compact threshold. Older turns are summarized into a compact note so the conversation stays under the context budget. *Watch a long history collapse into a summary in the trace.*
 - **Trace Inspector** — inspect the reconstructed request (system prompt, tools schema, message history) and response (message, finish reason, logprobs) for any turn.
 
 ## Requirements
@@ -72,7 +72,7 @@ New to the app? Walk through [`TUTORIAL.md`](TUTORIAL.md) to explore each featur
 | `commands.py` | Loads and expands `commands/*.md` slash commands. |
 | `skills.py` | Loads `skills/<name>/SKILL.md` and the `load_skill` tool. |
 | `planning.py` | Planning-mode system suffix and tool gating. |
-| `memory.py` | Token estimation and conversation compaction. |
+| `memory.py` | Chatlas token usage display, context-size estimation, and conversation compaction. |
 | `traces.py` | Reconstructs the request/response JSON for the Trace Inspector. |
 
 `prompting.py` and `toolsets.py` are the single source of truth shared by the live request and the trace, so what you inspect always matches what was actually sent.

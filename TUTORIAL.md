@@ -78,12 +78,12 @@ This is exactly how Anthropic's Agent Skills work: cheap metadata is always pres
 
 ## 6. Memory / compaction — staying under the budget
 
-1. Watch the **Memory** line in the sidebar: it shows an estimated token count and number of turns, growing as you chat.
+1. Watch the **Memory** line in the sidebar: after provider responses, it shows Chatlas-reported input/output token usage and the number of turns.
 2. Have a longer back-and-forth (5+ exchanges).
-3. Click **🧹 Compact context**. A note appears: the conversation collapsed from N turns to a short summary plus the most recent turns, and the token estimate drops.
+3. Click **🧹 Compact context**. A note appears: the conversation collapsed from N turns to a short summary plus the most recent turns, and the estimated context size drops.
 4. Send one more message and open its trace: the message history now begins with a single **summary** turn instead of the full transcript.
 
-You can automate this with **Auto-compact above (tokens)** — set it to a small number (e.g. `300`) and compaction triggers itself once the context grows past that.
+You can automate this with **Auto-compact above estimated context tokens** — set it to a small number (e.g. `300`) and compaction triggers itself once the estimated context grows past that.
 
 **Takeaway:** "memory" is not infinite — old turns get summarized so the important context survives within a finite window.
 
