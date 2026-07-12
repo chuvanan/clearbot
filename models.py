@@ -53,6 +53,11 @@ model_options["Custom (BYOK)"] = {CUSTOM_MODEL_ID: "Custom model + endpoint…"}
 default_model = next(iter(next(iter(model_options.values())).keys()))
 
 
+def supports_openai_reasoning(model: str) -> bool:
+    """Whether an OpenAI model id accepts the Responses API reasoning param."""
+    return model.startswith("o") or model.startswith("gpt-5")
+
+
 class RequestParams(BaseModel):
     """A snapshot of the parameter values at the moment of a request"""
 
@@ -62,6 +67,8 @@ class RequestParams(BaseModel):
     temperature: float
     tools: list[str]
     logprobs: bool = False
+    thinking_enabled: bool = False
+    thinking_effort: str = "medium"
     skills: list[str] = []
     planning_mode: bool = False
     command: str | None = None
@@ -84,6 +91,8 @@ def build_chat_client(
     *,
     base_url: str | None = None,
     api_key: str | None = None,
+    thinking_enabled: bool = False,
+    thinking_effort: str = "medium",
 ) -> chatlas.Chat:
     """Construct a chatlas client for the given model id and system prompt.
 
@@ -96,6 +105,7 @@ def build_chat_client(
       (Together, Groq, Fireworks, vLLM, …) — almost all speak the OpenAI API.
     - Otherwise the model id prefix selects a built-in provider.
     """
+    reasoning = thinking_effort if thinking_enabled else None
     if base_url:
         # Use the Chat Completions API (not the Responses API) for custom
         # endpoints: it is the lowest common denominator that third-party
@@ -105,11 +115,18 @@ def build_chat_client(
             system_prompt=system_prompt,
             base_url=base_url,
             api_key=api_key,
+            preserve_thinking=thinking_enabled,
         )
     if model.startswith("claude"):
-        return chatlas.ChatAnthropic(model=model, system_prompt=system_prompt)
+        return chatlas.ChatAnthropic(
+            model=model, system_prompt=system_prompt, reasoning=reasoning
+        )
     elif model.startswith("gpt"):
-        return chatlas.ChatOpenAI(model=model, system_prompt=system_prompt)
+        if not supports_openai_reasoning(model):
+            reasoning = None
+        return chatlas.ChatOpenAI(
+            model=model, system_prompt=system_prompt, reasoning=reasoning
+        )
     elif model.startswith("openrouter/"):
         return chatlas.ChatOpenRouter(
             model=model.removeprefix("openrouter/"),

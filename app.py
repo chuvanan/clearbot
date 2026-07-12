@@ -1,5 +1,6 @@
 import inspect
 import json
+from html import escape
 from pathlib import Path
 from typing import Callable
 
@@ -74,6 +75,18 @@ def app_ui(request: Request):
                 "Lower for coherence, higher for randomness."
             ),
             ui.input_checkbox("logprobs", "Enable logprobs (OpenAI only)", value=False),
+            ui.input_checkbox("thinking_enabled", "Enable thinking", value=False),
+            ui.input_select(
+                "thinking_effort",
+                "Thinking effort",
+                {
+                    "low": "Low",
+                    "medium": "Medium",
+                    "high": "High",
+                },
+                selected="medium",
+            ),
+            ui.help_text("Provider-supported reasoning summaries/extended thinking."),
             ui.input_checkbox("planning_mode", "Planning mode", value=False),
             ui.help_text(
                 "Asks for a plan first and hides write tools. Approve to execute."
@@ -139,6 +152,21 @@ def app_ui(request: Request):
                 .help-block {
                     margin-top: -1em;
                 }
+                .thinking-block {
+                    margin: 0.5rem 0 0.75rem;
+                    padding: 0.5rem 0.75rem;
+                    border-left: 3px solid #6c757d;
+                    background: #f8f9fa;
+                }
+                .thinking-block summary {
+                    cursor: pointer;
+                    font-weight: 600;
+                    margin-bottom: 0.35rem;
+                }
+                .thinking-content {
+                    white-space: pre-wrap;
+                    color: #495057;
+                }
                 """
             ),
         ),
@@ -192,10 +220,36 @@ def server(input: Inputs, output: Outputs, session: Session):
             temperature=input.temperature(),
             tools=input.tools(),
             logprobs=input.logprobs(),
+            thinking_enabled=input.thinking_enabled(),
+            thinking_effort=input.thinking_effort(),
             skills=list(input.skills()) if "skills" in input else [],
             planning_mode=input.planning_mode(),
             base_url=base_url,
         )
+
+    def render_stream_chunk(chunk: object) -> str:
+        """Render rich chatlas stream chunks for the Shiny chat."""
+        if isinstance(chunk, str):
+            return chunk
+
+        content_type = getattr(chunk, "content_type", None)
+        if content_type == "thinking_delta":
+            phase = getattr(chunk, "phase", "body")
+            thinking = escape(getattr(chunk, "thinking", ""))
+            if phase == "start":
+                return (
+                    '<details class="thinking-block" open>'
+                    "<summary>Thinking</summary>"
+                    '<div class="thinking-content">'
+                    f"{thinking}"
+                )
+            if phase == "end":
+                return "</div></details>\n\n"
+            return thinking
+
+        # Tool request/result chunks are preserved in Chatlas turns and visible
+        # in the trace; suppress them in the streamed assistant prose.
+        return ""
 
     async def run_request(params: RequestParams):
         """Run one model request from a fully-resolved RequestParams.
@@ -220,6 +274,8 @@ def server(input: Inputs, output: Outputs, session: Session):
             build_system_prompt(params),
             base_url=params.base_url,
             api_key=api_key,
+            thinking_enabled=params.thinking_enabled,
+            thinking_effort=params.thinking_effort,
         )
 
         if these_turns:
@@ -242,12 +298,26 @@ def server(input: Inputs, output: Outputs, session: Session):
 
         ctrl.reset()
         resp = await chat_client.stream_async(
-            params.user_prompt, kwargs=submit_kwargs, controller=ctrl
+            params.user_prompt,
+            content="all" if params.thinking_enabled else "text",
+            kwargs=submit_kwargs,
+            controller=ctrl,
         )
 
         async def gen():
+            thinking_open = False
             async for chunk in resp:
-                yield chunk
+                rendered = render_stream_chunk(chunk)
+                if getattr(chunk, "content_type", None) == "thinking_delta":
+                    phase = getattr(chunk, "phase", "body")
+                    if phase == "start":
+                        thinking_open = True
+                    elif phase == "end":
+                        thinking_open = False
+                if rendered:
+                    yield rendered
+            if thinking_open:
+                yield "</div></details>\n\n"
             with reactive.isolate():
                 yield button_for_index(len(snapshots.get()))
 

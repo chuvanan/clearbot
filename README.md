@@ -8,7 +8,9 @@ It is built using [Shiny](https://shiny.posit.co/py/) (Python) and [Chatlas](htt
 
 Each feature surfaces its underlying mechanism in the **Trace Inspector** (the `{…}` link next to each response).
 
-- **System prompt, temperature, logprobs** — the basic knobs of an LLM call.
+- **System prompt, temperature, logprobs, thinking** — the basic knobs of an
+  LLM call. Thinking requests provider-supported reasoning summaries/extended
+  thinking when available and shows returned thinking blocks in the trace.
 - **BYOK (custom model + endpoint)** — pick *Custom model + endpoint…* in the model list to point Clearbot at any OpenAI-compatible endpoint (Ollama, vLLM, Groq, Together, LiteLLM, …) with your own base URL, model name, and key. *The trace shows the custom endpoint; the key is never bookmarked or traced.*
 - **Tools** — toggle-able filesystem access and web search, plus a box to register your own Python functions as custom tools at runtime.
 - **Commands** — file-based slash commands (`commands/*.md`). Typing `/summarize some text` expands a prompt template before anything reaches the model. The chat shows what you typed; the trace shows the expanded prompt. *Commands are just macros.*

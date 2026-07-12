@@ -8,7 +8,7 @@ from typing import Iterable
 
 import chatlas
 
-from models import RequestParams
+from models import RequestParams, supports_openai_reasoning
 from prompting import build_system_prompt
 from toolsets import resolve_tools
 
@@ -29,6 +29,18 @@ def _turn_contents_to_dicts(turn: chatlas.Turn) -> list[dict]:
                 "type": "tool_result",
                 "id": content.id,
                 "value": str(content.get_model_value()),
+            })
+        elif getattr(content, "content_type", None) == "thinking":
+            results.append({
+                "type": "thinking",
+                "thinking": getattr(content, "thinking", ""),
+                "extra": getattr(content, "extra", None),
+            })
+        elif getattr(content, "content_type", None) == "thinking_delta":
+            results.append({
+                "type": "thinking_delta",
+                "phase": getattr(content, "phase", "body"),
+                "thinking": getattr(content, "thinking", ""),
             })
         else:
             results.append({
@@ -54,6 +66,23 @@ def reconstruct_request_traces(
         tools=tools_schema,
         messages=messages,
     )
+    if params.thinking_enabled:
+        if params.model.startswith("gpt") and supports_openai_reasoning(params.model):
+            result["reasoning"] = {
+                "effort": params.thinking_effort,
+                "summary": "auto",
+            }
+        elif params.model.startswith("gpt"):
+            result["_thinking_not_requested"] = (
+                "Selected OpenAI model is not reasoning-capable."
+            )
+        elif params.model.startswith("claude"):
+            result["thinking"] = {"type": "adaptive"}
+            result["output_config"] = {"effort": params.thinking_effort}
+        else:
+            result["_thinking_stream_display"] = True
+        if params.base_url:
+            result["_preserve_thinking"] = True
     if params.base_url:
         # BYOK: the custom endpoint this request was sent to. The API key is
         # intentionally absent here — it is never stored in the snapshot.
