@@ -85,7 +85,7 @@ def format_chatlas_token_usage(turns: list[MyTurn]) -> str:
         cached = f", {usage['cached_input']:,} cached input"
 
     return (
-        "Chatlas-reported usage: "
+        "Token usage: "
         f"{usage['input']:,} input, {usage['output']:,} output{cached} "
         f"· {turn_count} turns in context"
     )
