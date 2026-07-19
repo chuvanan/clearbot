@@ -1,6 +1,6 @@
-# Clearbot
+# Abidibot
 
-Clearbot is a chatbot UI designed to demystify how AI agents work. Instead of treating the model as a black box, it lets you toggle each mechanism on and off and **inspect the raw JSON** that is actually sent to and received from the model. The goal is to show that there is no magic — agent behavior is just prompt engineering, tool definitions, and context management.
+Abidibot is a chatbot UI designed to demystify how AI agents work. Instead of treating the model as a black box, it lets you toggle each mechanism on and off and **inspect the raw JSON** that is actually sent to and received from the model. The goal is to show that there is no magic — agent behavior is just prompt engineering, tool definitions, and context management.
 
 It is built using [Shiny](https://shiny.posit.co/py/) (Python) and [Chatlas](https://posit-dev.github.io/chatlas/).
 
@@ -11,7 +11,7 @@ Each feature surfaces its underlying mechanism in the **Trace Inspector** (the `
 - **System prompt, temperature, logprobs, thinking** — the basic knobs of an
   LLM call. Thinking requests provider-supported reasoning summaries/extended
   thinking when available and shows returned thinking blocks in the trace.
-- **BYOK (custom model + endpoint)** — pick *Custom model + endpoint…* in the model list to point Clearbot at any OpenAI-compatible endpoint (Ollama, vLLM, Groq, Together, LiteLLM, …) with your own base URL, model name, and key. *The trace shows the custom endpoint; the key is never bookmarked or traced.*
+- **BYOK (custom model + endpoint)** — pick *Custom model + endpoint…* in the model list to point Abidibot at any OpenAI-compatible endpoint (Ollama, vLLM, Groq, Together, LiteLLM, …) with your own base URL, model name, and key. *The trace shows the custom endpoint; the key is never bookmarked or traced.*
 - **Tools** — toggle-able filesystem access and web search, plus a box to register your own Python functions as custom tools at runtime.
 - **Commands** — file-based slash commands (`commands/*.md`). Typing `/summarize some text` expands a prompt template before anything reaches the model. The chat shows what you typed; the trace shows the expanded prompt. *Commands are just macros.*
 - **Skills** — file-based skills (`skills/<name>/SKILL.md`). Only a skill's *name and description* are injected into the system prompt; the full instructions are loaded on demand when the model calls the `load_skill` tool. *This is progressive disclosure — visible in the trace.*
@@ -29,7 +29,7 @@ To use a built-in provider model, set at least one of the following environment 
 - `ANTHROPIC_API_KEY` — used to access Anthropic LLM models.
 - `OPENROUTER_API_KEY` — used to access models via OpenRouter (Gemini, Llama, DeepSeek, Mistral, etc.).
 
-None of these are strictly required: you can instead select **Custom model + endpoint…** in the model picker and supply your own endpoint and key at runtime (see [BYOK](#byok-bring-your-own-key) below). Clearbot starts even with no keys set.
+None of these are strictly required: you can instead select **Custom model + endpoint…** in the model picker and supply your own endpoint and key at runtime (see [BYOK](#byok-bring-your-own-key) below). Abidibot starts even with no keys set.
 
 ### BYOK (bring your own key)
 

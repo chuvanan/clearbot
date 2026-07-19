@@ -46,7 +46,7 @@ if "OPENROUTER_API_KEY" in os.environ:
     }
 
 # BYOK is always available: even with no provider keys in the environment, a
-# user can point Clearbot at any OpenAI-compatible endpoint with their own key.
+# user can point Abidibot at any OpenAI-compatible endpoint with their own key.
 # This is also why we no longer hard-fail when no env keys are found.
 model_options["Custom (BYOK)"] = {CUSTOM_MODEL_ID: "Custom model + endpoint…"}
 

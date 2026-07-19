@@ -1,6 +1,6 @@
-# A guided tour of Clearbot
+# A guided tour of Abidibot
 
-This tutorial walks you through Clearbot's features in the order that best builds intuition for how AI agents work. The whole point of the app is that **nothing is hidden** — after each step, open the Trace Inspector and confirm the mechanism with your own eyes.
+This tutorial walks you through Abidibot's features in the order that best builds intuition for how AI agents work. The whole point of the app is that **nothing is hidden** — after each step, open the Trace Inspector and confirm the mechanism with your own eyes.
 
 ## 0. Start the app
 
@@ -14,7 +14,7 @@ Open the printed URL. Click the **Settings** label on the left to expand the sid
 
 ### Optional: bring your own model (BYOK)
 
-Clearbot ships with whichever providers your environment keys unlock, but it can talk to *any* OpenAI-compatible endpoint — a local model via Ollama, a vLLM/LiteLLM proxy, or a gateway like Groq or Together.
+Abidibot ships with whichever providers your environment keys unlock, but it can talk to *any* OpenAI-compatible endpoint — a local model via Ollama, a vLLM/LiteLLM proxy, or a gateway like Groq or Together.
 
 1. In **Model**, choose **Custom model + endpoint…**. Three fields appear.
 2. Fill them in, e.g. for a local Ollama server: endpoint `http://localhost:11434/v1`, model `llama3.2`, and any non-empty key.
