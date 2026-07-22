@@ -8,7 +8,7 @@ from typing import Iterable
 
 import chatlas
 
-from models import RequestParams, supports_openai_reasoning
+from models import RequestParams, supports_openai_reasoning, supports_temperature
 from prompting import build_system_prompt
 from toolsets import resolve_tools
 
@@ -62,10 +62,15 @@ def reconstruct_request_traces(
     result = dict(
         model=params.model,
         system=build_system_prompt(params),
-        temperature=params.temperature,
         tools=tools_schema,
         messages=messages,
     )
+    if supports_temperature(params.model):
+        result["temperature"] = params.temperature
+    else:
+        result["_temperature_not_supported"] = (
+            "Selected model only supports the API default temperature."
+        )
     if params.thinking_enabled:
         if params.model.startswith("gpt") and supports_openai_reasoning(params.model):
             result["reasoning"] = {

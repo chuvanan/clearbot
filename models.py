@@ -29,6 +29,7 @@ if "OPENAI_API_KEY" in os.environ:
         "gpt-4.1": "GPT-4.1 (slowest, smartest)",
         "gpt-4.1-mini": "GPT-4.1 mini",
         "gpt-4.1-nano": "GPT-4.1 nano (fastest, cheapest)",
+        "gpt-5": "GPT-5 (reasoning)",
     }
 if "ANTHROPIC_API_KEY" in os.environ:
     model_options["Anthropic"] = {
@@ -56,6 +57,17 @@ default_model = next(iter(next(iter(model_options.values())).keys()))
 def supports_openai_reasoning(model: str) -> bool:
     """Whether an OpenAI model id accepts the Responses API reasoning param."""
     return model.startswith("o") or model.startswith("gpt-5")
+
+
+def supports_temperature(model: str) -> bool:
+    """Whether the model accepts a custom temperature value.
+
+    OpenAI reasoning models (gpt-5, o-series) only support the API default
+    temperature and reject a custom value via the Responses API.
+    """
+    if model.startswith("gpt") and supports_openai_reasoning(model):
+        return False
+    return True
 
 
 class RequestParams(BaseModel):

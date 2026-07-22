@@ -19,6 +19,7 @@ from models import (
     build_chat_client,
     default_model,
     model_options,
+    supports_temperature,
 )
 from offcanvas import offcanvas_ui
 from prompting import build_system_prompt
@@ -68,12 +69,7 @@ def app_ui(request: Request):
             ui.output_ui("byok_inputs"),
             ui.input_text_area("system_prompt", "System prompt", rows=6),
             ui.help_text("Instructs the LLM how to behave"),
-            ui.input_slider(
-                "temperature", "Temperature", min=0, max=2, value=0.7, step=0.05
-            ),
-            ui.help_text(
-                "Lower for coherence, higher for randomness."
-            ),
+            ui.output_ui("temperature_control"),
             ui.input_checkbox("logprobs", "Enable logprobs (OpenAI only)", value=False),
             ui.input_checkbox("thinking_enabled", "Enable thinking", value=False),
             ui.input_select(
@@ -292,7 +288,9 @@ def server(input: Inputs, output: Outputs, session: Session):
             for tool in custom_tools():
                 chat_client.register_tool(tool)
 
-        submit_kwargs: dict = dict(temperature=params.temperature)
+        submit_kwargs: dict = {}
+        if supports_temperature(params.model):
+            submit_kwargs["temperature"] = params.temperature
         if params.logprobs and params.model.startswith("gpt"):
             submit_kwargs["log_probs"] = True
 
@@ -532,6 +530,24 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.event(input.compact)
     async def manual_compact():
         await do_compaction(notify=True)
+
+    @render.ui
+    def temperature_control():
+        # Reasoning models (gpt-5, o-series) reject a custom temperature value,
+        # so swap the slider for an explanatory note instead of sending a value
+        # the API would refuse.
+        model_name = input.model()
+        if model_name != CUSTOM_MODEL_ID and not supports_temperature(model_name):
+            return ui.help_text(
+                "Temperature is not configurable for this model — it only "
+                "supports the API default."
+            )
+        return ui.TagList(
+            ui.input_slider(
+                "temperature", "Temperature", min=0, max=2, value=0.7, step=0.05
+            ),
+            ui.help_text("Lower for coherence, higher for randomness."),
+        )
 
     @render.ui
     def byok_inputs():
