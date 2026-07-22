@@ -22,6 +22,7 @@ from models import (
     supports_temperature,
 )
 from offcanvas import offcanvas_ui
+from planning import save_plan
 from prompting import build_system_prompt
 from skills import load_skills
 from toolsets import resolve_tools
@@ -339,6 +340,19 @@ def server(input: Inputs, output: Outputs, session: Session):
                     )
                     # After a (completed) planning response, offer to approve.
                     awaiting_approval.set(params.planning_mode and not ctrl.cancelled)
+                if params.planning_mode and not ctrl.cancelled:
+                    plan_text = "\n".join(str(c) for c in turns.get()[-1].contents)
+                    plan_path = save_plan(params.user_prompt, plan_text)
+                    ui.notification_show(
+                        f"Plan saved to {plan_path.relative_to(Path(__file__).parent)}",
+                        action=ui.tags.a(
+                            "Open plan",
+                            href=plan_path.resolve().as_uri(),
+                            target="_blank",
+                        ),
+                        type="message",
+                        duration=None,
+                    )
                 if ctrl.cancelled:
                     await chat.append_message(
                         {
