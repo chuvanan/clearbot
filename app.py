@@ -498,10 +498,19 @@ def server(input: Inputs, output: Outputs, session: Session):
         current = turns()
         before = estimate_tokens(current)
         model_name, base_url, api_key = selected_model_config()
+        # compact_turns always keeps the last `keep_recent` turns verbatim, so
+        # with 2 or fewer turns there is nothing older to summarize — even a
+        # single oversized exchange would otherwise never compact. Drop the
+        # recent-window in that case so it still gets summarized.
+        keep_recent = 2 if len(current) > 2 else 0
         new_turns = await compact_turns(
-            current, model_name, base_url=base_url, api_key=api_key
+            current, model_name, keep_recent=keep_recent, base_url=base_url, api_key=api_key
         )
-        if new_turns is current or len(new_turns) >= len(current):
+        # Compaction always collapses to [summary_user, summary_ack, *recent],
+        # so a short conversation can compact to the same turn count it
+        # started with. Judge success by estimated token savings, not by
+        # whether the turn count dropped.
+        if new_turns is current or estimate_tokens(new_turns) >= before:
             if notify:
                 ui.notification_show("Not enough history to compact.", type="message")
             return False
