@@ -9,13 +9,15 @@ It is built using [Shiny](https://shiny.posit.co/py/) (Python) and [Chatlas](htt
 Each feature surfaces its underlying mechanism in the **Trace Inspector** (the `{…}` link next to each response).
 
 - **System prompt, temperature, logprobs, thinking** — the basic knobs of an
-  LLM call. Thinking requests provider-supported reasoning summaries/extended
-  thinking when available and shows returned thinking blocks in the trace.
+  LLM call. The temperature control is hidden automatically for models that
+  reject a custom value (e.g. OpenAI reasoning models like gpt-5/o-series).
+  Thinking requests provider-supported reasoning summaries/extended thinking
+  when available and shows returned thinking blocks in the trace.
 - **BYOK (custom model + endpoint)** — pick *Custom model + endpoint…* in the model list to point Abidibot at any OpenAI-compatible endpoint (Ollama, vLLM, Groq, Together, LiteLLM, …) with your own base URL, model name, and key. *The trace shows the custom endpoint; the key is never bookmarked or traced.*
 - **Tools** — toggle-able filesystem access and web search, plus a box to register your own Python functions as custom tools at runtime.
 - **Commands** — file-based slash commands (`commands/*.md`). Typing `/summarize some text` expands a prompt template before anything reaches the model. The chat shows what you typed; the trace shows the expanded prompt. *Commands are just macros.*
-- **Skills** — file-based skills (`skills/<name>/SKILL.md`). Only a skill's *name and description* are injected into the system prompt; the full instructions are loaded on demand when the model calls the `load_skill` tool. *This is progressive disclosure — visible in the trace.*
-- **Planning mode** — a toggle that appends a "make a plan, don't act yet" instruction to the system prompt and removes state-changing tools. An **Approve & execute** button then re-runs with the full toolset. *A "mode" is just an injected instruction plus a gated toolset.*
+- **Skills** — file-based skills (`skills/<name>/SKILL.md`). Only a skill's *name and description* are injected into the system prompt; the full instructions are loaded on demand when the model calls the `load_skill` tool. Ships with skills for regex and commit messages, plus a data-analysis/database/visualization set (CSV profiling, data cleaning, SQL query building, schema design review, chart selection). *This is progressive disclosure — visible in the trace.*
+- **Planning mode** — a toggle that appends a "make a plan, don't act yet" instruction to the system prompt and removes state-changing tools. An **Approve & execute** button re-runs with the full toolset, or **Cancel** dismisses the plan so you can ask for a revision instead. Every completed plan is also saved to `.plan/<timestamp>.md`, with a link in the notification to open it immediately. *A "mode" is just an injected instruction plus a gated toolset.*
 - **Memory / compaction** — Chatlas-reported provider token usage, a manual **Compact context** button, and an estimated-context auto-compact threshold. Older turns are summarized into a compact note so the conversation stays under the context budget. *Watch a long history collapse into a summary in the trace.*
 - **Trace Inspector** — inspect the reconstructed request (system prompt, tools schema, message history) and response (message, finish reason, logprobs) for any turn.
 
@@ -58,14 +60,14 @@ uv run shiny run app.py
 
 Alternatively, use `uv sync` to install the app's dependencies in a virtual environment, and then run the app with `shiny run app.py` (or using VS Code or Positron with the Shiny VS Code extension).
 
-New to the app? Walk through [`TUTORIAL.md`](TUTORIAL.md) to explore each feature and see its mechanism in the trace.
+New to the app? Walk through [`TUTORIAL.md`](TUTORIAL.md) to explore each feature and see its mechanism in the trace. For a feature-by-feature demo script with example prompts (including one per skill), see [`DEMO.md`](DEMO.md) — a Vietnamese translation is available at [`DEMO.vi.md`](DEMO.vi.md).
 
 ## Project structure
 
 | File | Responsibility |
 | --- | --- |
 | `app.py` | Shiny UI layout and server wiring. |
-| `models.py` | Available models (incl. the BYOK custom option), request/session state, and the `build_chat_client` factory. |
+| `models.py` | Available models (incl. the BYOK custom option), which models support reasoning/custom temperature, request/session state, and the `build_chat_client` factory. |
 | `tools.py` | Built-in tool definitions (`filesystem`, `websearch`). |
 | `toolsets.py` | Resolves the effective tool list for a request (toolsets + skills + planning gating). |
 | `prompting.py` | Builds the effective system prompt (user prompt + skills + planning). |
