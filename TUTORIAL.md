@@ -30,6 +30,7 @@ That last point is the lesson: the key is used only for the live call. It is nev
 2. Send a message like `Tell me about the weather.`
 3. Open the trace. Notice the `system` field carries your instruction — that single string is the entire "personality."
 4. Now drag **Temperature** to `0` and ask the same thing twice, then to `2` and ask again. Low temperature is repetitive and safe; high temperature is wild. (Logprobs, OpenAI-only, lets you see the per-token probabilities behind this.)
+5. Switch **Model** to a reasoning model such as `gpt-5` (if it's in your list). The Temperature slider disappears, replaced by a note that the model only supports the API default — some reasoning models reject a custom temperature outright, so the app hides the control rather than sending a value that would be rejected.
 
 **Takeaway:** "behavior" is mostly one string of text plus one sampling number.
 
@@ -63,6 +64,8 @@ Commands are markdown files in `commands/`. Open `commands/explain.md` to see th
 
 This is exactly how Anthropic's Agent Skills work: cheap metadata is always present, and the expensive body is pulled in only when relevant. Skills live in `skills/<name>/SKILL.md`.
 
+Besides `regex-builder` and `commit-messages`, the app ships with a set of data-focused skills: `csv-profiler`, `data-cleaning-checklist`, `sql-query-builder`, `schema-design-review`, and `chart-recommender`. Try enabling **sql-query-builder** and asking `Write a query to find the top 5 customers by total order value in the last 90 days` — same `load_skill` mechanism, different domain.
+
 **Takeaway:** the model decides *when* to load detailed instructions, keeping context lean until a skill is actually needed.
 
 ## 5. Planning mode — a "mode" is prompt + tool gating
@@ -72,7 +75,8 @@ This is exactly how Anthropic's Agent Skills work: cheap metadata is always pres
 3. The model responds with a plan and asks for approval. Open the trace and compare it to step 2's trace:
    - The `system` prompt has an extra **planning** instruction.
    - The `tools` array is **shorter** — the write tool (`set_current_dir`) has been removed, so the model *cannot* act even if it wanted to.
-4. Click **✅ Approve & execute**. Planning mode turns off, the full toolset returns, and the model proceeds. Inspect that trace to see the difference.
+4. Click **✅ Approve & execute**. Planning mode turns off, the full toolset returns, and the model proceeds. Inspect that trace to see the difference. If the plan isn't what you wanted, click **❌ Cancel** instead — it just dismisses the prompt (no request is sent) so you can ask for a revision while staying in planning mode.
+5. Every completed plan is also written to `.plan/<timestamp>.md`, and the notification that appears includes an **Open plan** link to jump straight to the file.
 
 **Takeaway:** there is no special "planning brain" — a mode is just an injected instruction plus a restricted toolset.
 
@@ -92,3 +96,4 @@ You can automate this with **Auto-compact above estimated context tokens** — s
 - Open the files in `commands/` and `skills/` and add your own — no code changes needed.
 - Read `prompting.py` and `toolsets.py`: these build the system prompt and tool list that *both* the live request and the trace use, which is why the inspector always tells the truth.
 - Bookmark a session (the URL updates as you chat) and share it to reproduce a conversation.
+- See [`DEMO.md`](DEMO.md) for a ready-to-run demo script with an example prompt for every feature, including one per skill (a Vietnamese translation is at [`DEMO.vi.md`](DEMO.vi.md)).
