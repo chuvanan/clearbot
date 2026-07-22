@@ -392,6 +392,13 @@ def server(input: Inputs, output: Outputs, session: Session):
         params.planning_mode = False
         await run_request(params)
 
+    @reactive.effect
+    @reactive.event(input.cancel_plan)
+    def cancel_plan():
+        # Just dismiss the approval prompt — no request is sent, and planning
+        # mode stays on so the user can ask for a revised plan.
+        awaiting_approval.set(False)
+
     @session.bookmark.on_bookmarked
     async def session_on_bookmarked(url: str):
         print("session_on_bookmarked")
@@ -614,6 +621,11 @@ def server(input: Inputs, output: Outputs, session: Session):
                 "approve_plan",
                 "✅ Approve & execute",
                 class_="btn-success btn-sm",
+            ),
+            ui.input_action_button(
+                "cancel_plan",
+                "❌ Cancel",
+                class_="btn-outline-danger btn-sm",
             ),
             style=(
                 "position: fixed; bottom: 5.5rem; left: 50%; "
